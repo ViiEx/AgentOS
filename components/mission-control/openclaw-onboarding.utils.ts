@@ -92,7 +92,7 @@ export function resolveChatGptRecoveryMessage(message?: string | null, progress?
   }
 
   if (/macos|local agentos|oauth.*gateway|not available in this environment/.test(normalized)) {
-    return "ChatGPT sign-in is available from the local AgentOS machine. Use another provider here, or sign in locally first.";
+    return "In-app ChatGPT sign-in requires AgentOS on macOS or Linux. On other systems, sign in with the OpenClaw CLI on the AgentOS machine, then refresh model status.";
   }
 
   if (/operator\.(?:admin|read|write|pairing)|device access|pending.*device/.test(normalized)) {

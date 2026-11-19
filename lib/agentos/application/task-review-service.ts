@@ -3,6 +3,7 @@ import "server-only";
 import { createHash, randomUUID } from "node:crypto";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { resolveAgentOsMissionControlRoot } from "@/lib/agentos/runtime-storage";
 
 import type { TaskReviewResolution, TaskReviewStatus } from "@/lib/agentos/workforce/task-review";
 
@@ -63,12 +64,7 @@ async function readStoredReview(actorId: string, taskKey: string): Promise<Store
 
 function reviewRecordPath(actorId: string, taskKey: string) {
   const id = createHash("sha256").update(`${actorId}\0${taskKey}`).digest("hex");
-  return path.join(missionControlRootPath(), "reviews", `${id}.json`);
-}
-
-function missionControlRootPath() {
-  const configuredRoot = process.env.AGENTOS_MISSION_CONTROL_ROOT?.trim();
-  return path.resolve(configuredRoot || path.join(process.cwd(), ".mission-control"));
+  return path.join(resolveAgentOsMissionControlRoot(), "reviews", `${id}.json`);
 }
 
 function omitActor(record: StoredTaskReview): TaskReviewResolution {

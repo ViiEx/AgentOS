@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { setTimeout as delay } from "node:timers/promises";
 import { afterEach, test } from "node:test";
 
@@ -15,6 +16,26 @@ const syntheticUrl = "https://auth.openai.com/api/accounts/authorize?" +
   "&redirect_uri=http%3A%2F%2Flocalhost%3A38213%2Fauth%2Fcallback";
 
 afterEach(() => setOpenClawAdapterForTesting(null));
+
+test("older Gateways report an unsupported native sign-in without silently changing grant type", async () => {
+  const calls: string[] = [];
+  installGateway(async (method) => {
+    calls.push(method);
+    if (method === "agents.list") return { defaultId: "main", agents: [{ id: "main" }] };
+    throw new Error(`unknown method: ${method}`);
+  });
+  startSiwcFlow("older-gateway-owner");
+  assert.deepEqual(await expectPhase("older-gateway-owner", "failed"), { phase: "failed", reason: "version" });
+  assert.ok(calls.includes("openclaw.setup.auth.start"));
+  assert.ok(calls.every((method) => method === "agents.list" || method === "wizard.cancel" || method.startsWith("openclaw.setup.")), calls.join(", "));
+});
+
+test("the native welcome offers an explicit subscription-login recovery through the existing flow", () => {
+  const welcome = readFileSync("components/mission-control/siwc-welcome.tsx", "utf8");
+  const onboarding = readFileSync("components/mission-control/openclaw-onboarding.tsx", "utf8");
+  assert.match(welcome, /failed === "version"[\s\S]*?onClick=\{onSubscriptionSignIn\}[\s\S]*?Use ChatGPT subscription sign-in/);
+  assert.match(onboarding, /onSubscriptionSignIn=\{\(\) => \{\s*onLeaveSiwc\?\.\(\);\s*setShowLegacySetup\(true\);\s*setSelectedVisualStage\("models"\);\s*setAdvancedProviderFlowOpen\(false\);\s*onConnectChatGPT\(\);/);
+});
 
 test("accepts the SIWC authorization endpoint and port emitted by OpenClaw, separate from Codex OAuth", () => {
   assert.equal(validateOpenClawSiwcAuthorizationUrl(syntheticUrl), syntheticUrl);

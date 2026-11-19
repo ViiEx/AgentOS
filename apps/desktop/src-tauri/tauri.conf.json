@@ -36,6 +36,14 @@
     "macOS": {
       "signingIdentity": "-"
     },
+    "linux": {
+      "rpm": {
+        "depends": ["python3"]
+      },
+      "deb": {
+        "depends": ["python3"]
+      }
+    },
     "createUpdaterArtifacts": true
   }
 }

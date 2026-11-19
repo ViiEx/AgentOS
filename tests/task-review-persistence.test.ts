@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readdir, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
@@ -32,6 +32,27 @@ test("operator review decisions persist across reads and remain actor-scoped", a
   } finally {
     if (previousRoot === undefined) delete process.env.AGENTOS_MISSION_CONTROL_ROOT;
     else process.env.AGENTOS_MISSION_CONTROL_ROOT = previousRoot;
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("packaged task reviews use the persistent runtime directory without an explicit sidecar override", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "agentos-packaged-review-"));
+  const keys = ["AGENTOS_PACKAGE_RUNTIME", "AGENTOS_RUNTIME_DIR", "AGENTOS_MISSION_CONTROL_ROOT", "AGENTOS_DEPLOYMENT_PLATFORM"] as const;
+  const previous = Object.fromEntries(keys.map((key) => [key, process.env[key]]));
+  process.env.AGENTOS_PACKAGE_RUNTIME = "1";
+  process.env.AGENTOS_RUNTIME_DIR = root;
+  delete process.env.AGENTOS_MISSION_CONTROL_ROOT;
+  delete process.env.AGENTOS_DEPLOYMENT_PLATFORM;
+  try {
+    const review = await writeTaskReview({ actorId: "operator", taskId: "task", taskKey: "dispatch", status: "accepted", action: "Accepted" });
+    assert.deepEqual(await readTaskReview("operator", "dispatch"), review);
+    assert.equal((await readdir(path.join(root, "mission-control", "reviews"))).length, 1);
+  } finally {
+    for (const key of keys) {
+      if (previous[key] === undefined) delete process.env[key];
+      else process.env[key] = previous[key];
+    }
     await rm(root, { recursive: true, force: true });
   }
 });

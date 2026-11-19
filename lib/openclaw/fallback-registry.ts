@@ -342,7 +342,7 @@ const fallbackRegistryEntries = [
     id: "application.chatgpt-auth",
     operation: "models.auth.login",
     sourcePath: "lib/openclaw/application/chatgpt-provider-auth-service.ts",
-    sourceAnchors: ["await runOpenClaw(args, { timeoutMs });", "runOpenClawChatGptInteractiveLogin"],
+    sourceAnchors: ["buildOpenClawChatGptLoginArgs", "runOpenClawChatGptInteractiveLogin"],
     nativeMethodCandidate: null,
     classification: "setup-recovery",
     reason: "Interactive ChatGPT OAuth is intentionally delegated to OpenClaw's CLI flow; no stable native equivalent is assumed.",

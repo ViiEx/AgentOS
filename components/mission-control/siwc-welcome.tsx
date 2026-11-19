@@ -15,7 +15,7 @@ const errors: Record<SiwcFailure, string> = {
   owner: "Sign in as the AgentOS owner to connect ChatGPT to the default agent.",
   "local-required": "Open AgentOS on the Gateway computer to connect ChatGPT. For a remote Gateway, choose another sign-in method.",
   gateway: "OpenClaw could not be reached. Check Gateway settings or retry setup.",
-  version: "This OpenClaw installation does not expose Sign in with ChatGPT. Review Updates or choose another provider.",
+  version: "This OpenClaw installation does not expose the newer token-sharing sign-in. Try ChatGPT subscription sign-in (Codex OAuth), or review OpenClaw updates.",
   unsupported: "OpenClaw could not start this sign-in. Review Gateway access or use another provider.",
   busy: "A sign-in is already running. Finish or cancel that sign-in before starting again.",
   declined: "ChatGPT authorization was declined. You can try again when ready.",
@@ -36,6 +36,7 @@ type Props = {
   onPrepare: () => void | Promise<void>;
   onStart: () => void;
   onAlternative: () => void;
+  onSubscriptionSignIn: () => void;
   onEnter: () => void;
   onCreateWorkspace?: () => void;
   onVerifiedChange: (verified: boolean) => void;
@@ -47,7 +48,7 @@ function active(state: SiwcOnboardingState | null) {
     state?.phase === "verifying" || state?.phase === "authorize" || state?.phase === "choose-account";
 }
 
-export function SiwcWelcome({ systemReady, onPrepare, onStart, onAlternative, onEnter, onCreateWorkspace, onVerifiedChange, onBack }: Props) {
+export function SiwcWelcome({ systemReady, onPrepare, onStart, onAlternative, onSubscriptionSignIn, onEnter, onCreateWorkspace, onVerifiedChange, onBack }: Props) {
   const modelFieldId = useId();
   const reasoningFieldId = useId();
   const [state, setState] = useState<SiwcOnboardingState | null>(null);
@@ -464,6 +465,10 @@ export function SiwcWelcome({ systemReady, onPrepare, onStart, onAlternative, on
               <Button asChild className={primaryAction}><a href="/settings#security">Open Security settings</a></Button>
             ) : failed === "restart" ? (
               <Button asChild className={primaryAction}><a href="/settings#gateway">Open Gateway settings</a></Button>
+            ) : failed === "version" ? (
+              <Button className={primaryAction} onClick={onSubscriptionSignIn}>
+                Use ChatGPT subscription sign-in <ArrowUpRight aria-hidden className="ml-2 size-4" />
+              </Button>
             ) : (
               <Button className={primaryAction} onClick={() => void start()}>
                 {failed ? "Try ChatGPT again" : "Continue with ChatGPT"} <ArrowUpRight aria-hidden className="ml-2 size-4" />

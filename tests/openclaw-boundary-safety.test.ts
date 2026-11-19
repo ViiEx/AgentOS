@@ -190,13 +190,13 @@ test("model provider API route keeps ChatGPT OAuth behind the application servic
   assert.match(routeSource, /connectOpenClawChatGptProvider/);
   assert.match(routeSource, /statusContext\.connection\.connected/);
   assert.doesNotMatch(routeSource, /resolveOpenAiAuthHandoff|manualCommand:\s*authHandoff\.command/);
-  assert.match(serviceSource, /readOpenClawCodexPluginReady/);
-  assert.match(serviceSource, /resolveExactOpenClawPluginSpec\("@openclaw\/codex", runtimeVersion\)/);
-  assert.match(serviceSource, /\["plugins",\s*"install",\s*"--force",\s*"--accept-capabilities",\s*pluginSpec\]/);
+  assert.doesNotMatch(serviceSource, /readOpenClawCodexPlugin|resolveExactOpenClawPluginSpec|runSetupCommand|"plugins"/);
   assert.match(serviceSource, /"models",\s*"auth",\s*"login"/);
   assert.match(serviceSource, /"openai"/);
   assert.match(serviceSource, /openclaw-cli-interactive/);
-  assert.match(serviceSource, /"\/usr\/bin\/script"/);
+  assert.match(serviceSource, /"\/usr\/bin\/python3"/);
+  assert.match(serviceSource, /\[openClawPtyRunnerPath, invocation\.command, \.\.\.invocation\.args\]/);
+  assert.doesNotMatch(serviceSource, /"\/usr\/bin\/script"/);
   assert.match(routeSource, /authMethod:\s*z\.enum\(\["api-key",\s*"chatgpt-oauth"\]\)/);
   assert.match(routeSource, /input\.provider === "openai" && input\.authMethod === "chatgpt-oauth"/);
   assert.match(routeSource, /requireAgentOsProductPermission\(request, "secrets\.manage"\)/);

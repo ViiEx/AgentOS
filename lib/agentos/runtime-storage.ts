@@ -24,6 +24,7 @@ export type AgentOsStoragePreparation = {
   status: "ready" | "migrated" | "conflict" | "failed";
   persistent: boolean;
   checkedAt: string;
+  migrationKey?: string;
 };
 
 export function resolveAgentOsMissionControlRoot(
@@ -38,8 +39,7 @@ export function resolveAgentOsMissionControlRoot(
   }
 
   if (env.AGENTOS_PACKAGE_RUNTIME === "1") {
-    const runtimeDir = env.AGENTOS_RUNTIME_DIR?.trim();
-    if (runtimeDir) return path.join(resolveRuntimePath(runtimeDir), "mission-control");
+    return path.join(path.resolve(resolveAgentOsRuntimeDir(env)), "mission-control");
   }
 
   return path.resolve(cwd, ".mission-control");
@@ -62,6 +62,7 @@ export async function prepareAgentOsRuntimeStorage(options: {
   const persistent = packaged && !railway;
   const target = resolveAgentOsMissionControlRoot(env, cwd);
   const legacy = path.resolve(cwd, ".mission-control");
+  const migrationKey = createHash("sha256").update(`${legacy}\0${target}`).digest("hex");
 
   if (!persistent || explicitRoot || legacy === target) {
     return writePreparation(env, { status: "ready", persistent, checkedAt: new Date().toISOString() });
@@ -71,12 +72,19 @@ export async function prepareAgentOsRuntimeStorage(options: {
     const sourceState = await inspectTree(legacy);
     const targetState = await inspectTree(target);
     if (!sourceState.exists || sourceState.entries === 0) {
+      await mkdir(target, { recursive: true, mode: 0o700 });
       return writePreparation(env, { status: "ready", persistent, checkedAt: new Date().toISOString() });
     }
 
     if (targetState.exists && targetState.entries > 0) {
-      if (sameTree(sourceState.files, targetState.files)) {
-        return writePreparation(env, { status: "migrated", persistent, checkedAt: new Date().toISOString() });
+      const previous = await readAgentOsStoragePreparation(env);
+      // Once verified, the persistent copy is authoritative. Normal writes to
+      // it must not make the next launch fall back to the retained legacy copy.
+      if (
+        (previous?.status === "migrated" && previous.migrationKey === migrationKey)
+        || sameTree(sourceState.files, targetState.files)
+      ) {
+        return writePreparation(env, { status: "migrated", persistent, migrationKey, checkedAt: new Date().toISOString() });
       }
       env[AGENTOS_MISSION_CONTROL_ROOT_ENV] = legacy;
       return writePreparation(env, { status: "conflict", persistent, checkedAt: new Date().toISOString() });
@@ -94,7 +102,7 @@ export async function prepareAgentOsRuntimeStorage(options: {
       }
       await rename(staging, target);
       await chmod(target, 0o700).catch(() => {});
-      return writePreparation(env, { status: "migrated", persistent, checkedAt: new Date().toISOString() });
+      return writePreparation(env, { status: "migrated", persistent, migrationKey, checkedAt: new Date().toISOString() });
     } catch (error) {
       await rm(staging, { recursive: true, force: true }).catch(() => {});
       throw error;
@@ -121,7 +129,7 @@ export async function readAgentOsStoragePreparation(env: NodeJS.ProcessEnv = pro
 }
 
 async function writePreparation(env: NodeJS.ProcessEnv, preparation: AgentOsStoragePreparation) {
-  if (env.AGENTOS_RUNTIME_DIR?.trim()) {
+  if (env.AGENTOS_RUNTIME_DIR?.trim() || env.AGENTOS_PACKAGE_RUNTIME === "1") {
     const filePath = path.join(resolveAgentOsRuntimeDir(env), MIGRATION_STATUS_PATH);
     await mkdir(path.dirname(filePath), { recursive: true, mode: 0o700 });
     const temporaryPath = `${filePath}.${randomUUID()}.tmp`;
@@ -204,10 +212,6 @@ async function copyTree(source: string, destination: string) {
 
 function sameTree(left: Map<string, string>, right: Map<string, string>) {
   return left.size === right.size && [...left].every(([file, digest]) => right.get(file) === digest);
-}
-
-function resolveRuntimePath(value: string) {
-  return path.resolve(value.startsWith("~") ? path.join(process.env.HOME ?? "", value.slice(1)) : value);
 }
 
 function isMissing(error: unknown) {

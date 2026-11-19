@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto";
-import { mkdtemp, rm } from "node:fs/promises";
+import { access, mkdtemp, rm, stat } from "node:fs/promises";
 import { spawn } from "node:child_process";
 import net from "node:net";
 import os from "node:os";
@@ -10,7 +10,9 @@ import { nodeExecutableName, sanitizeDiagnostics, resolveTargetPlatform } from "
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(scriptDir, "../..");
-const runtimeRoot = path.join(repoRoot, "apps", "desktop", "runtime");
+const runtimeRoot = process.env.AGENTOS_DESKTOP_SMOKE_ROOT?.trim()
+  ? path.resolve(process.env.AGENTOS_DESKTOP_SMOKE_ROOT.trim())
+  : path.join(repoRoot, "apps", "desktop", "runtime");
 const targetPlatform = resolveTargetPlatform();
 const serverRoot = path.join(runtimeRoot, "agentos");
 const serverWrapperPath = path.join(serverRoot, "agentos-desktop-server.cjs");
@@ -31,6 +33,7 @@ const child = spawn(nodePath, [serverWrapperPath], {
     HOSTNAME: "127.0.0.1",
     PORT: String(port),
     AGENTOS_API_TOKEN: apiToken,
+    AGENTOS_DESKTOP: "1",
     AGENTOS_PACKAGE_RUNTIME: "1",
     AGENTOS_RUNTIME_DIR: runtimeState
   }
@@ -45,6 +48,24 @@ try {
   const response = await fetch(`http://127.0.0.1:${port}/api/auth/status`, { headers: { authorization: `Bearer ${apiToken}` } });
   if (!response.ok) throw new Error(`AgentOS readiness endpoint returned HTTP ${response.status}.`);
 
+  const storage = await stat(path.join(runtimeState, "mission-control"));
+  if (!storage.isDirectory()) throw new Error("Packaged AgentOS state was not created in its per-user runtime directory.");
+  if (process.platform !== "win32" && (storage.mode & 0o777) !== 0o700) {
+    throw new Error("Packaged AgentOS state must be private to its owner.");
+  }
+  if (await access(path.join(serverRoot, ".mission-control")).then(() => true, () => false)) {
+    throw new Error("Packaged AgentOS unexpectedly created state inside its installation directory.");
+  }
+
+  const unauthorizedLogin = await fetch(`http://127.0.0.1:${port}/api/models/chatgpt-auth`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ action: "start" })
+  });
+  if (![401, 403].includes(unauthorizedLogin.status)) {
+    throw new Error(`Unauthenticated ChatGPT sign-in was not denied (HTTP ${unauthorizedLogin.status}).`);
+  }
+
   const binding = await inspectLoopbackBinding(child.pid, port);
   if (binding.status === "verified" && !binding.value.includes("127.0.0.1")) {
     throw new Error(`AgentOS server did not bind to loopback only: ${binding.value}`);
@@ -54,7 +75,7 @@ try {
   child.stdin.end();
   const exit = await waitForExit(child);
   if (exit !== 0 && exit !== 143) throw new Error(`AgentOS server did not exit cleanly after graceful shutdown (code ${exit}).`);
-  console.log(`Desktop packaged-server smoke passed on ${process.platform}/${process.arch}; loopback binding ${binding.status}.`);
+  console.log(`Desktop packaged-server smoke passed on ${process.platform}/${process.arch}; private per-user storage, unauthenticated login rejection, shutdown, and loopback binding ${binding.status}.`);
 } catch (error) {
   if (!child.killed) child.kill("SIGKILL");
   throw new Error(`${error instanceof Error ? error.message : String(error)}${output ? `\n${sanitizeDiagnostics(output)}` : ""}`);
@@ -91,13 +112,17 @@ function reservePort() {
 
 async function inspectLoopbackBinding(pid, portNumber) {
   if (!pid) return { status: "unavailable", value: "missing child pid" };
-  const command = process.platform === "win32" ? "netstat" : "lsof";
-  const args = process.platform === "win32" ? ["-ano", "-p", "TCP"] : ["-Pan", "-p", String(pid), "-iTCP", "-sTCP:LISTEN"];
+  const command = process.platform === "win32" ? "netstat" : process.platform === "linux" ? "ss" : "lsof";
+  const args = process.platform === "win32" ? ["-ano", "-p", "TCP"]
+    : process.platform === "linux" ? ["-ltnp"]
+      : ["-Pan", "-p", String(pid), "-iTCP", "-sTCP:LISTEN"];
   try {
     const result = await runCommand(command, args);
     const value = process.platform === "win32"
       ? result.stdout.split(/\r?\n/).filter((line) => line.includes(`:${portNumber}`) && line.trim().endsWith(String(pid))).join("\n").trim()
-      : result.stdout.trim();
+      : process.platform === "linux"
+        ? result.stdout.split(/\r?\n/).filter((line) => line.includes(`:${portNumber} `) && line.includes(`pid=${pid},`)).join("\n").trim()
+        : result.stdout.trim();
     return { status: value ? "verified" : "unavailable", value };
   } catch {
     return { status: "unavailable", value: "binding inspection tool unavailable" };

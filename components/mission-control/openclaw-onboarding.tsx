@@ -440,6 +440,13 @@ export function OpenClawOnboarding({
                 systemReady={onboardingSystemReady}
                 onPrepare={onRunSystemSetup}
                 onStart={onStartSiwc}
+                onSubscriptionSignIn={() => {
+                  onLeaveSiwc?.();
+                  setShowLegacySetup(true);
+                  setSelectedVisualStage("models");
+                  setAdvancedProviderFlowOpen(false);
+                  onConnectChatGPT();
+                }}
                 onAlternative={() => {
                   onLeaveSiwc?.();
                   setShowLegacySetup(true);

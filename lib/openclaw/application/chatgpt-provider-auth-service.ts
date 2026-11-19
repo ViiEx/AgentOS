@@ -9,14 +9,8 @@ import {
   buildOpenClawSpawnEnv,
   resolveOpenClawSpawnInvocation
 } from "@/lib/openclaw/install";
-import { resolveOpenClawBin, resolveOpenClawVersion, runOpenClaw } from "@/lib/openclaw/cli";
+import { resolveOpenClawBin } from "@/lib/openclaw/cli";
 import { getOpenClawAdapter } from "@/lib/openclaw/adapter/openclaw-adapter";
-import {
-  readOpenClawCodexPluginReady,
-  readOpenClawCodexPluginSetupState,
-  type OpenClawCodexPluginSetupState
-} from "@/lib/openclaw/application/model-provider-state-service";
-import { resolveExactOpenClawPluginSpec } from "@/lib/openclaw/application/channel-plugin-compat";
 import { validateOpenAiAuthorizationUrl } from "@/lib/openclaw/chatgpt-auth-url";
 import { redactErrorMessage } from "@/lib/security/redaction";
 import type {
@@ -24,17 +18,12 @@ import type {
 } from "@/lib/agentos/contracts";
 
 const chatGptAuthTimeoutMs = 6 * 60_000;
-const pluginSetupTimeoutMs = 2 * 60_000;
 const chatGptAuthSessionRetentionMs = 10 * 60_000;
 const openAiAuthorizationUrlPattern = /https:\/\/auth\.openai\.com\/oauth\/authorize[^\s"'<>]*/ig;
 const openClawPtyRunnerPath = join(process.cwd(), "scripts", "openclaw-pty-runner.py");
 
 export type ChatGptProviderAuthDependencies = {
   platform: NodeJS.Platform;
-  readPluginReady: () => Promise<boolean>;
-  readPluginSetupState?: () => Promise<OpenClawCodexPluginSetupState>;
-  resolveRuntimeVersion?: () => Promise<string | null>;
-  runSetupCommand: (args: string[], timeoutMs: number) => Promise<void>;
   resolveAuthAgentId?: (requestedAgentId?: string) => Promise<string | null | undefined>;
   runInteractiveLogin: (input: {
     agentId: string;
@@ -77,12 +66,6 @@ let authStartQueue: Promise<unknown> = Promise.resolve();
 
 const defaultDependencies: ChatGptProviderAuthDependencies = {
   platform: process.platform,
-  readPluginReady: async () => await readOpenClawCodexPluginReady(),
-  readPluginSetupState: readOpenClawCodexPluginSetupState,
-  resolveRuntimeVersion: resolveOpenClawVersion,
-  runSetupCommand: async (args, timeoutMs) => {
-    await runOpenClaw(args, { timeoutMs });
-  },
   resolveAuthAgentId: resolveOpenClawChatGptAuthAgentId,
   runInteractiveLogin: runOpenClawChatGptInteractiveLogin
 };
@@ -100,9 +83,9 @@ async function startBrowserAuthSession(
   input: { force?: boolean; agentId?: string },
   dependencies: ChatGptProviderAuthDependencies
 ) {
-  if (dependencies.platform !== "darwin") {
+  if (dependencies.platform !== "darwin" && dependencies.platform !== "linux") {
     throw new ChatGptBrowserAuthError(
-      "Browser ChatGPT sign-in currently requires local AgentOS on macOS.",
+      "Browser ChatGPT sign-in currently requires local AgentOS on macOS or Linux.",
       "chatgpt-auth-unsupported"
     );
   }
@@ -213,14 +196,9 @@ async function runBrowserAuthSession(
   force: boolean,
   dependencies: ChatGptProviderAuthDependencies
 ) {
-  let currentProgress = "Checking the OpenClaw Codex plugin...";
-  const updateProgress = (message: string) => {
-    currentProgress = message;
-    session.message = message;
-  };
+  let currentProgress = "Starting ChatGPT sign-in";
 
   try {
-    await prepareChatGptProviderAuth(dependencies, updateProgress);
     session.abortController.signal.throwIfAborted();
     session.state = "waiting-for-browser";
     session.message = "Open the ChatGPT sign-in page in the new browser tab.";
@@ -258,85 +236,7 @@ async function runBrowserAuthSession(
   }
 }
 
-export async function prepareChatGptProviderAuth(
-  dependencies: ChatGptProviderAuthDependencies,
-  onProgress?: (message: string) => void
-) {
-  // An unavailable Gateway is not evidence that a plugin is missing.
-  // Let the canonical login command verify provider support in that case.
-  onProgress?.("Checking the OpenClaw Codex plugin...");
-  const pluginState = dependencies.readPluginSetupState
-    ? await dependencies.readPluginSetupState().catch(() => null)
-    : await dependencies.readPluginReady()
-      .then((ready) => ({ installed: ready, ready, status: null }))
-      .catch(() => null);
-
-  if (!pluginState || pluginState.ready) {
-    return false;
-  }
-
-  if (!pluginState.installed) {
-    onProgress?.("Checking the OpenClaw version...");
-    const runtimeVersion = await (dependencies.resolveRuntimeVersion ?? resolveOpenClawVersion)();
-    const pluginSpec = resolveExactOpenClawPluginSpec("@openclaw/codex", runtimeVersion);
-
-    if (!pluginSpec) {
-      throw new Error(
-        "OpenClaw version could not be verified, so AgentOS will not install an unpinned Codex plugin. Start the Gateway and retry ChatGPT sign-in."
-      );
-    }
-
-    onProgress?.(`Installing the Codex plugin for OpenClaw ${runtimeVersion}...`);
-    await dependencies.runSetupCommand(
-      ["plugins", "install", "--force", "--accept-capabilities", pluginSpec],
-      pluginSetupTimeoutMs
-    );
-  } else {
-    onProgress?.("Enabling the installed Codex plugin with required capabilities...");
-    await dependencies.runSetupCommand(
-      ["plugins", "enable", "codex", "--accept-capabilities"],
-      pluginSetupTimeoutMs
-    );
-  }
-
-  onProgress?.("Verifying the Codex plugin with OpenClaw...");
-  if (!(await dependencies.readPluginReady())) {
-    if (!pluginState.installed) {
-      onProgress?.("Accepting the installed Codex plugin capabilities...");
-      await dependencies.runSetupCommand(
-        ["plugins", "enable", "codex", "--accept-capabilities"],
-        pluginSetupTimeoutMs
-      );
-    }
-
-    onProgress?.("Verifying the Codex plugin with OpenClaw...");
-    if (!(await dependencies.readPluginReady())) {
-      throw new Error(
-        "OpenClaw did not report the Codex plugin as ready after setup. Review OpenClaw plugin diagnostics, then retry ChatGPT sign-in."
-      );
-    }
-  }
-
-  return !pluginState.installed;
-}
-
 function resolveChatGptAuthFailureProgress(progress: string) {
-  if (/installing the codex plugin/i.test(progress)) {
-    return "OpenClaw could not install the Codex plugin.";
-  }
-
-  if (/enabling the installed codex plugin|accepting the installed codex plugin/i.test(progress)) {
-    return "OpenClaw could not enable the Codex plugin.";
-  }
-
-  if (/verifying the codex plugin/i.test(progress)) {
-    return "OpenClaw could not verify the Codex plugin after setup.";
-  }
-
-  if (/checking the openclaw version/i.test(progress)) {
-    return "OpenClaw's version could not be verified.";
-  }
-
   if (/completing chatgpt sign-in/i.test(progress)) {
     return "OpenClaw did not complete ChatGPT sign-in.";
   }
@@ -442,13 +342,15 @@ export async function connectOpenClawChatGptProvider(
   } = {},
   dependencies: ChatGptProviderAuthDependencies = defaultDependencies
 ): Promise<ChatGptProviderAuthResult> {
-  if (dependencies.platform !== "darwin") {
+  if (dependencies.platform !== "darwin" && dependencies.platform !== "linux") {
     throw new Error(
-      "In-app ChatGPT sign-in currently requires local AgentOS on macOS. OpenClaw does not expose provider OAuth through Gateway yet."
+      "In-app ChatGPT sign-in currently requires local AgentOS on macOS or Linux. Sign in with the OpenClaw CLI on the AgentOS machine, then refresh model status."
     );
   }
 
-  const pluginInstalled = await prepareChatGptProviderAuth(dependencies);
+  // ChatGPT OAuth belongs to OpenClaw's bundled OpenAI provider. The separate
+  // Codex runtime plugin is not an authentication prerequisite. Let the official
+  // login command validate provider availability and capability consent.
   const agentId = await resolveChatGptAuthAgentId(dependencies, input.agentId);
 
   await dependencies.runInteractiveLogin({
@@ -458,7 +360,7 @@ export async function connectOpenClawChatGptProvider(
   });
 
   return {
-    pluginInstalled,
+    pluginInstalled: false,
     authMode: "openclaw-cli-interactive"
   };
 }
@@ -556,10 +458,8 @@ async function runOpenClawChatGptInteractiveLogin(input: {
 
   await new Promise<void>((resolve, reject) => {
     const child = spawn(
-      process.platform === "darwin" ? "/usr/bin/python3" : "/usr/bin/script",
-      process.platform === "darwin"
-        ? [openClawPtyRunnerPath, invocation.command, ...invocation.args]
-        : ["-q", "/dev/null", invocation.command, ...invocation.args],
+      "/usr/bin/python3",
+      [openClawPtyRunnerPath, invocation.command, ...invocation.args],
       {
         detached: true,
         env: buildOpenClawSpawnEnv(),

@@ -39,6 +39,7 @@ const requiredPaths = [
   path.join(runtimeRoot, "agentos", "server.js"),
   path.join(runtimeRoot, "agentos", "agentos-desktop-server.cjs"),
   path.join(runtimeRoot, "agentos", "agentos-build.json"),
+  path.join(runtimeRoot, "agentos", "scripts", "openclaw-pty-runner.py"),
   path.join(runtimeRoot, "agentos", ".next", "static"),
   path.join(runtimeRoot, "agentos", "public"),
   nodeBinaryPath
@@ -48,6 +49,10 @@ for (const filePath of requiredPaths) {
   await access(filePath).catch(() => {
     throw new Error(`Desktop runtime is incomplete; missing ${filePath}. Run pnpm desktop:prepare first.`);
   });
+}
+
+if (targetPlatform === "linux" && !config.bundle?.linux?.rpm?.depends?.includes("python3")) {
+  throw new Error("Linux RPM must declare the Python 3 dependency used for interactive provider sign-in.");
 }
 
 const cargoVersion = /^version\s*=\s*"([^"]+)"/m.exec(cargoManifest)?.[1];
